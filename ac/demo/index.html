@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transaction Guardian AI</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--tx:#e8eaf0;--mut:#9aa3b2;--ok:#2fbf71;--warn:#f0b429;--bad:#ef4444;--ac:#6ea8fe}
+@media (prefers-color-scheme: light){:root{--bg:#f5f6f8;--card:#fff;--tx:#14171f;--mut:#566074}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:16px;max-width:980px;margin-inline:auto}
+h1{font-size:22px;margin:8px 0 2px}p.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border-radius:12px;padding:16px;margin-bottom:14px;border:1px solid #2a2f3a33}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:720px){.row{grid-template-columns:1fr}}
+code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all;white-space:pre-wrap}
+button{background:var(--ac);color:#07101f;border:0;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer;margin:2px 4px 2px 0}
+button.ghost{background:transparent;color:var(--tx);border:1px solid var(--mut)}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-weight:700;font-size:13px;color:#fff}
+.LOW{background:var(--ok)}.MEDIUM{background:var(--warn);color:#222}.HIGH{background:var(--bad)}
+.lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.big{font-size:17px;font-weight:600}.match{color:var(--ok)}.nomatch{color:var(--bad);font-weight:700}
+</style></head><body>
+<h1>Transaction Guardian AI</h1>
+<p class="sub">What your wallet shows vs. what the transaction actually does. Commitment enforced by IntentGuard on Quai Orchard.</p>
+<div class="card"><div class="lbl">Pick a scenario</div>
+<button onclick="run('safe')">Safe: setValue(42)</button>
+<button onclick="run('unlimited')">Attack: unlimited approve</button>
+<button onclick="run('nft')">Attack: setApprovalForAll</button>
+<button onclick="run('safeupgrade')">WazirX-style: Safe hides delegatecall upgrade</button>
+<button class="ghost" onclick="run('unknown')">Unknown function</button></div>
+<div class="row">
+<div class="card"><div class="lbl">Wallet shows (raw calldata)</div><pre id="raw">-</pre></div>
+<div class="card"><div class="lbl">Guardian shows</div><div class="big" id="sum">-</div><p><span id="lvl" class="pill">-</span> <b id="scr"></b></p><ul id="why"></ul></div></div>
+<div class="card"><div class="lbl">On-chain commitment (sent to IntentGuard on commit)</div>
+<div>manifestHash: <code id="mh">-</code></div><div>calldataHash: <code id="ch">-</code></div>
+<p><button onclick="tamper()">Simulate attacker changing 1 byte after approval</button></p>
+<div id="tam"></div>
+<p style="color:var(--mut);font-size:13px">On execute, the contract recomputes keccak256(calldata) and reverts with IntentMismatch if it differs from the committed hash. It also blocks common approval selectors and non-allowlisted targets. See deployments/orchard.json for the live contract addresses once deployed.</p></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>window.module={exports:{}};window.require=()=>({ethers});</script>
+<script src="../engine/index.js"></script>
+<script>
+const {buildManifest,MAX_UINT}=module.exports;
+const A="0x1111111111111111111111111111111111111111",B="0x2222222222222222222222222222222222222222";
+const erc=new ethers.Interface(["function approve(address,uint256)","function setApprovalForAll(address,bool)","function upgradeToAndCall(address,bytes)","function setValue(uint256)"]);
+const safe=new ethers.Interface(["function execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)"]);
+const S={
+ safe:()=>erc.encodeFunctionData("setValue",[42]),
+ unlimited:()=>erc.encodeFunctionData("approve",[B,MAX_UINT]),
+ nft:()=>erc.encodeFunctionData("setApprovalForAll",[B,true]),
+ safeupgrade:()=>safe.encodeFunctionData("execTransaction",[A,0,erc.encodeFunctionData("upgradeToAndCall",[B,"0x"]),1,0,0,0,ethers.ZeroAddress,ethers.ZeroAddress,"0x"]),
+ unknown:()=>"0xdeadbeef00000000"};
+let cur=null;
+function run(k){const data=S[k]();const m=buildManifest({to:A,data});cur={data,m};
+ raw.textContent=data;sum.textContent=m.decoded.summary;lvl.textContent=m.risk.level;lvl.className="pill "+m.risk.level;
+ scr.textContent="risk "+m.risk.score+"/100";why.innerHTML=m.risk.reasons.map(r=>"<li>"+r+"</li>").join("")||"<li>no flags</li>";
+ mh.textContent=m.manifestHash;ch.textContent=m.calldataHash;tam.textContent="";}
+function tamper(){if(!cur)return;const b=cur.data.slice(0,-1)+(cur.data.slice(-1)==="0"?"1":"0");const h=ethers.keccak256(b);
+ tam.innerHTML="Tampered calldataHash: <code>"+h+"</code><br><span class='nomatch'>MISMATCH - IntentGuard would revert (IntentMismatch). Execution blocked.</span>";}
+run("safeupgrade");
+</script></body></html>
